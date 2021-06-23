@@ -11,12 +11,15 @@ namespace TextToTalk
         private readonly WebSocketServer server;
         private readonly ServerBehavior behavior;
 
-        public int Port { get; } = FreeTcpPort();
         public bool Active { get; private set; }
 
-        public WsServer()
+        public WsServer(int port)
         {
-            this.server = new WebSocketServer($"ws://localhost:{Port}");
+            if (port == 0)
+            {
+                port = 50665;
+            }
+            this.server = new WebSocketServer($"ws://localhost:{port}");
             this.behavior = new ServerBehavior();
             this.server.AddWebSocketService("/Messages", () => this.behavior);
         }
@@ -49,15 +52,6 @@ namespace TextToTalk
             if (!Active) return;
             Active = false;
             this.server.Stop();
-        }
-
-        private static int FreeTcpPort()
-        {
-            var l = new TcpListener(IPAddress.Loopback, 0);
-            l.Start();
-            var port = ((IPEndPoint)l.LocalEndpoint).Port;
-            l.Stop();
-            return port;
         }
 
         private class ServerBehavior : WebSocketBehavior

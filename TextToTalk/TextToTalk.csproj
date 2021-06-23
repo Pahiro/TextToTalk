@@ -21,8 +21,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.Polly" Version="3.7.1.4" />
     <PackageReference Include="Dalamud.CrystalTower" Version="1.2.0" />
     <PackageReference Include="DalamudPackager" Version="1.2.1" />
+    <PackageReference Include="NAudio" Version="2.0.1" />
     <PackageReference Include="WebSocketSharpFork" Version="1.0.4" />
   </ItemGroup>
 
@@ -31,6 +33,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="AWSSDK.Core">
+      <HintPath>bin\Debug\net472\AWSSDK.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="AWSSDK.Polly">
+      <HintPath>bin\Debug\net472\AWSSDK.Polly.dll</HintPath>
+    </Reference>
     <Reference Include="Dalamud">
       <HintPath Condition="Exists('$(AppData)\XIVLauncher\addon\Hooks\dev')">$(AppData)\XIVLauncher\addon\Hooks\dev\Dalamud.dll</HintPath>
       <Private>false</Private>
@@ -42,6 +50,9 @@
     <Reference Include="ImGuiScene">
       <HintPath Condition="Exists('$(AppData)\XIVLauncher\addon\Hooks\dev')">$(AppData)\XIVLauncher\addon\Hooks\dev\ImGuiScene.dll</HintPath>
       <Private>false</Private>
+    </Reference>
+    <Reference Include="NAudio">
+      <HintPath>bin\Debug\net472\NAudio.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath Condition="Exists('$(AppData)\XIVLauncher\addon\Hooks\dev')">$(AppData)\XIVLauncher\addon\Hooks\dev\Newtonsoft.Json.dll</HintPath>

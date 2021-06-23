@@ -8,8 +8,11 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
+using System.IO;
 using System.Linq;
 using System.Speech.Synthesis;
+using System.Threading;
+using System.Threading.Tasks;
 using TextToTalk.Modules;
 using TextToTalk.Talk;
 using TextToTalk.UI;
@@ -40,7 +43,7 @@ namespace TextToTalk
             this.config = (PluginConfiguration)this.pluginInterface.GetPluginConfig() ?? new PluginConfiguration();
             this.config.Initialize(this.pluginInterface);
 
-            this.wsServer = new WsServer();
+            this.wsServer = new WsServer(config.WebsocketPort);
             this.speechSynthesizer = new SpeechSynthesizer();
             this.sharedState = new SharedState();
 
@@ -124,7 +127,7 @@ namespace TextToTalk
                 }
             }
 
-            Say(text);
+            SayAsync(text);
         }
 
         private void OnChatMessage(XivChatType type, uint id, ref SeString sender, ref SeString message, ref bool handled)
@@ -164,21 +167,21 @@ namespace TextToTalk
                 .Any(t => t.Match(textValue));
             if (!(chatTypes.EnableAllChatTypes || typeAccepted) || this.config.Good.Count > 0 && !goodMatch) return;
 
-            Say(textValue);
+            SayAsync(textValue);
         }
 
-        private void Say(string textValue)
+        private async Task SayAsync(string textValue)
         {
             var cleanText = TalkUtils.StripSSMLTokens(textValue);
 
-            if (this.config.UseWebsocket)
+            if (this.config.Synthesizer == "Websocket Server")
             {
                 this.wsServer.Broadcast(cleanText);
 #if DEBUG
                 PluginLog.Log("Sent message {0} on WebSocket server.", textValue);
 #endif
             }
-            else
+            else if (this.config.Synthesizer == "Microsoft Voices")
             {
                 this.speechSynthesizer.Rate = this.config.Rate;
                 this.speechSynthesizer.Volume = this.config.Volume;
@@ -189,6 +192,41 @@ namespace TextToTalk
                 }
 
                 this.speechSynthesizer.SpeakAsync(cleanText);
+            }
+            else if (this.config.Synthesizer == "AWS Polly")
+            {
+                await Task.Run(() =>
+                {
+                    var awsCredentials = new Amazon.Runtime.BasicAWSCredentials(config.AccessKeyID, config.SecretAccessKey);
+                    PluginLog.Log("Credentials Init");
+                    Amazon.Polly.AmazonPollyClient cl = new Amazon.Polly.AmazonPollyClient(awsCredentials, Amazon.RegionEndpoint.EUCentral1);
+                    PluginLog.Log("Polly Client Init");
+                    Amazon.Polly.Model.SynthesizeSpeechRequest req = new Amazon.Polly.Model.SynthesizeSpeechRequest();
+                    PluginLog.Log("Polly Model Init");
+                    req.Text = cleanText;
+                    req.VoiceId = Amazon.Polly.VoiceId.Matthew;
+                    req.OutputFormat = Amazon.Polly.OutputFormat.Mp3;
+                    req.SampleRate = "8000";
+                    req.TextType = Amazon.Polly.TextType.Text;
+                    Amazon.Polly.Model.SynthesizeSpeechResponse resp = cl.SynthesizeSpeech(req);
+                    MemoryStream local_stream = new MemoryStream();
+                    resp.AudioStream.CopyTo(local_stream);
+                    local_stream.Position = 0;
+                    PluginLog.Log("Got mp3 stream, length: " + local_stream.Length.ToString());
+                
+                    NAudio.Wave.Mp3FileReader reader = new NAudio.Wave.Mp3FileReader(local_stream);
+                    NAudio.Wave.WaveStream wave_stream = NAudio.Wave.WaveFormatConversionStream.CreatePcmStream(reader);
+                    NAudio.Wave.BlockAlignReductionStream ba_stream = new NAudio.Wave.BlockAlignReductionStream(wave_stream);
+                    NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
+
+                    PluginLog.Log("Playing stream...");
+                    wout.Init(ba_stream);
+                    wout.Play();
+                    while (wout.PlaybackState == NAudio.Wave.PlaybackState.Playing)
+                    {
+                        Thread.Sleep(100);
+                    }
+                });
             }
         }
 

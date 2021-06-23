@@ -43,6 +43,15 @@ namespace TextToTalk
 
         public bool UseWebsocket { get; set; }
 
+        public int WebsocketPort { get; set; }
+        
+        public string Synthesizer { get; set; }
+
+        public string AccessKeyID { get; set; }
+        public string SecretAccessKey { get; set; }
+        public string VoiceId { get; set; }
+        public string Engine { get; set; }
+
         public bool NameNpcWithSay { get; set; } = true;
 
         public bool DisallowMultipleSay { get; set; }

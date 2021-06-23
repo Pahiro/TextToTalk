@@ -1,5 +1,6 @@
 ﻿using Dalamud.CrystalTower.UI;
 using Dalamud.Game.Text;
+using Dalamud.Plugin;
 using ImGuiNET;
 using System;
 using System.Collections.Generic;
@@ -49,101 +50,162 @@ namespace TextToTalk.UI
 
         private void DrawSynthesizerSettings()
         {
-            var useKeybind = Configuration.UseKeybind;
-            if (ImGui.Checkbox("Enable Keybind", ref useKeybind))
-            {
-                Configuration.UseKeybind = useKeybind;
-                Configuration.Save();
-            }
-
-            ImGui.PushItemWidth(100f);
-            var kItem1 = VirtualKey.EnumToIndex(Configuration.ModifierKey);
-            if (ImGui.Combo("##TextToTalkKeybind1", ref kItem1, VirtualKey.Names.Take(3).ToArray(), 3))
-            {
-                Configuration.ModifierKey = VirtualKey.IndexToEnum(kItem1);
-                Configuration.Save();
-            }
-            ImGui.SameLine();
-            var kItem2 = VirtualKey.EnumToIndex(Configuration.MajorKey) - 3;
-            if (ImGui.Combo("TTS Toggle Keybind##TextToTalkKeybind2", ref kItem2, VirtualKey.Names.Skip(3).ToArray(), VirtualKey.Names.Length - 3))
-            {
-                Configuration.MajorKey = VirtualKey.IndexToEnum(kItem2) + 3;
-                Configuration.Save();
-            }
-            ImGui.PopItemWidth();
-
-            ImGui.Text("");
-            var useWebsocket = Configuration.UseWebsocket;
-            if (ImGui.Checkbox("Use WebSocket", ref useWebsocket))
-            {
-                Configuration.UseWebsocket = useWebsocket;
-                Configuration.Save();
-
-                if (Configuration.UseWebsocket)
-                    WebSocketServer.Start();
-                else
-                    WebSocketServer.Stop();
-            }
-            ImGui.TextColored(new Vector4(1.0f, 1.0f, 1.0f, 0.6f), $"{(WebSocketServer.Active ? "Started" : "Will start")} on ws://localhost:{WebSocketServer.Port}");
-
-            if (!useWebsocket)
-            {
-                var rate = Configuration.Rate;
-                if (ImGui.SliderInt("Rate", ref rate, -10, 10))
+            if (ImGui.CollapsingHeader("Keybinds")) {
+                var useKeybind = Configuration.UseKeybind;
+                if (ImGui.Checkbox("Enable Keybind", ref useKeybind))
                 {
-                    Configuration.Rate = rate;
+                    Configuration.UseKeybind = useKeybind;
+                    Configuration.Save();
+                }
+                ImGui.PushItemWidth(100f);
+                var kItem1 = VirtualKey.EnumToIndex(Configuration.ModifierKey);
+                if (ImGui.Combo("##TextToTalkKeybind1", ref kItem1, VirtualKey.Names.Take(3).ToArray(), 3))
+                {
+                    Configuration.ModifierKey = VirtualKey.IndexToEnum(kItem1);
+                    Configuration.Save();
+                }
+                ImGui.SameLine();
+                var kItem2 = VirtualKey.EnumToIndex(Configuration.MajorKey) - 3;
+                if (ImGui.Combo("TTS Toggle Keybind##TextToTalkKeybind2", ref kItem2, VirtualKey.Names.Skip(3).ToArray(), VirtualKey.Names.Length - 3))
+                {
+                    Configuration.MajorKey = VirtualKey.IndexToEnum(kItem2) + 3;
+                    Configuration.Save();
+                }
+                ImGui.PopItemWidth();
+            }
+            if (ImGui.CollapsingHeader("Voices"))
+            {
+                string[] items = { "Microsoft Voices", "Websocket Server", "AWS Polly" };
+
+                string itemName = Configuration.Synthesizer;
+                int itemIndex = Array.FindIndex(items, item => item == itemName);
+
+                if (ImGui.Combo("Synthesizer", ref itemIndex, items, items.Length))
+                {
+                    Configuration.Synthesizer = items[itemIndex];
+                    Configuration.Save();
+                }
+                if (Configuration.Synthesizer == "Websocket Server")
+                {
+                    PluginLog.Log(Configuration.WebsocketPort.ToString());
+                    var websocketPort = Configuration.WebsocketPort;
+                    
+                    if (ImGui.InputInt("Websocket Port", ref websocketPort, 0))
+                    {
+                        Configuration.WebsocketPort = websocketPort;
+                        Configuration.Save();
+                        WebSocketServer.Stop();
+                        WebSocketServer.Start();
+                    }
+                    ImGui.TextColored(new Vector4(1.0f, 1.0f, 1.0f, 0.6f), $"{(WebSocketServer.Active ? "Started" : "Will start")} on ws://localhost:{Configuration.WebsocketPort}");
+                }
+                if (Configuration.Synthesizer == "Microsoft Voices")
+                {
+                    var rate = Configuration.Rate;
+                    if (ImGui.SliderInt("Rate", ref rate, -10, 10))
+                    {
+                        Configuration.Rate = rate;
+                        Configuration.Save();
+                    }
+
+                    var volume = Configuration.Volume;
+                    if (ImGui.SliderInt("Volume", ref volume, 0, 100))
+                    {
+                        Configuration.Volume = volume;
+                        Configuration.Save();
+                    }
+
+                    var voiceName = Configuration.VoiceName;
+                    var voices = Synthesizer.GetInstalledVoices().Where(iv => iv?.Enabled ?? false).ToList();
+                    var voiceIndex = voices.FindIndex(iv => iv?.VoiceInfo?.Name == voiceName);
+                    if (ImGui.Combo("Voice",
+                        ref voiceIndex,
+                        voices
+                            .Select(iv => $"{iv?.VoiceInfo?.Name} ({iv?.VoiceInfo?.Culture?.TwoLetterISOLanguageName.ToUpperInvariant() ?? "Unknown Language"})")
+                            .ToArray(),
+                        voices.Count))
+                    {
+                        Configuration.VoiceName = voices[voiceIndex].VoiceInfo.Name;
+                        Configuration.Save();
+                    }
+
+                    ImGui.Spacing();
+                    if (ImGui.Button("Don't see all of your voices?##VoiceUnlockerSuggestion"))
+                    {
+                        OpenWindow<VoiceUnlockerWindow>();
+                    }
+                }
+                if (Configuration.Synthesizer == "AWS Polly")
+                {
+                    var AccessKeyID = "";
+                    if (Configuration.AccessKeyID != null)
+                    {
+                        AccessKeyID = Configuration.AccessKeyID;
+                    }
+                    if (ImGui.InputText("AccessKey ID", ref AccessKeyID, 128, ImGuiInputTextFlags.Password))
+                    {
+                        Configuration.AccessKeyID = AccessKeyID;
+                        Configuration.Save();
+                    }
+
+                    var SecretAccessKey = "";
+                    if (Configuration.SecretAccessKey != null)
+                    {
+                        SecretAccessKey = Configuration.SecretAccessKey;
+                    }
+                    if (ImGui.InputText("Secret Access Key", ref SecretAccessKey, 128, ImGuiInputTextFlags.Password))
+                    {
+                        Configuration.SecretAccessKey = SecretAccessKey;
+                        Configuration.Save();
+                    }
+
+                    var VoiceId = "";
+                    if (Configuration.VoiceId != null)
+                    {
+                        VoiceId = Configuration.VoiceId;
+                    }
+
+                    if (ImGui.InputText("Voice ID", ref VoiceId, 128))
+                    {
+                        Configuration.VoiceId = VoiceId;
+                        Configuration.Save();
+                    }
+                    
+                    string[] engine = { "neural", "standard" };
+
+                    string engineItem = Configuration.Engine;
+                    int engineIndex = Array.FindIndex(engine, item => item == engineItem);
+
+                    if (ImGui.Combo("Engine", ref engineIndex, engine, engine.Length))
+                    {
+                        Configuration.Engine = engine[engineIndex];
+                        Configuration.Save();
+                    }
+                }
+            }
+            if (ImGui.CollapsingHeader("Dialog"))
+            {
+                var readFromQuestTalkAddon = Configuration.ReadFromQuestTalkAddon;
+                if (ImGui.Checkbox("Read NPC dialogue from the dialogue window", ref readFromQuestTalkAddon))
+                {
+                    Configuration.ReadFromQuestTalkAddon = readFromQuestTalkAddon;
                     Configuration.Save();
                 }
 
-                var volume = Configuration.Volume;
-                if (ImGui.SliderInt("Volume", ref volume, 0, 100))
+                ImGui.Text("");
+                var nameNpcWithSay = Configuration.NameNpcWithSay;
+                if (ImGui.Checkbox("Include \"NPC Name says:\" in NPC dialogue", ref nameNpcWithSay))
                 {
-                    Configuration.Volume = volume;
+                    Configuration.NameNpcWithSay = nameNpcWithSay;
                     Configuration.Save();
                 }
 
-                var voiceName = Configuration.VoiceName;
-                var voices = Synthesizer.GetInstalledVoices().Where(iv => iv?.Enabled ?? false).ToList();
-                var voiceIndex = voices.FindIndex(iv => iv?.VoiceInfo?.Name == voiceName);
-                if (ImGui.Combo("Voice",
-                    ref voiceIndex,
-                    voices
-                        .Select(iv => $"{iv?.VoiceInfo?.Name} ({iv?.VoiceInfo?.Culture?.TwoLetterISOLanguageName.ToUpperInvariant() ?? "Unknown Language"})")
-                        .ToArray(),
-                    voices.Count))
+                var disallowMultipleSay = Configuration.DisallowMultipleSay;
+                if (ImGui.Checkbox("Only say \"Character Name says:\" the first time a character speaks", ref disallowMultipleSay))
                 {
-                    Configuration.VoiceName = voices[voiceIndex].VoiceInfo.Name;
+                    Configuration.DisallowMultipleSay = disallowMultipleSay;
                     Configuration.Save();
                 }
-
-                ImGui.Spacing();
-                if (ImGui.Button("Don't see all of your voices?##VoiceUnlockerSuggestion"))
-                {
-                    OpenWindow<VoiceUnlockerWindow>();
-                }
-            }
-
-            ImGui.Text("");
-            var readFromQuestTalkAddon = Configuration.ReadFromQuestTalkAddon;
-            if (ImGui.Checkbox("Read NPC dialogue from the dialogue window", ref readFromQuestTalkAddon))
-            {
-                Configuration.ReadFromQuestTalkAddon = readFromQuestTalkAddon;
-                Configuration.Save();
-            }
-
-            ImGui.Text("");
-            var nameNpcWithSay = Configuration.NameNpcWithSay;
-            if (ImGui.Checkbox("Include \"NPC Name says:\" in NPC dialogue", ref nameNpcWithSay))
-            {
-                Configuration.NameNpcWithSay = nameNpcWithSay;
-                Configuration.Save();
-            }
-
-            var disallowMultipleSay = Configuration.DisallowMultipleSay;
-            if (ImGui.Checkbox("Only say \"Character Name says:\" the first time a character speaks", ref disallowMultipleSay))
-            {
-                Configuration.DisallowMultipleSay = disallowMultipleSay;
-                Configuration.Save();
             }
         }
 
