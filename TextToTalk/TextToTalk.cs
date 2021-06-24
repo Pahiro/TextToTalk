@@ -19,8 +19,6 @@ using TextToTalk.UI;
 
 namespace TextToTalk
 {
-    //These aren't technically supposed to be stored. Just want them as public variables.
-    //They'll be loaded whenever the plugin is loaded or the config is changed.
     public class TextToTalk : IDalamudPlugin
     {
         //Global Objects
