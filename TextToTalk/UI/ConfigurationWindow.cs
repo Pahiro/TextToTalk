@@ -193,7 +193,7 @@ namespace TextToTalk.UI
                     string voiceItem = Configuration.PollyVoice;
                     int voiceIndex = Array.FindIndex(VList.ToArray(), item => item == voiceItem);
 
-                    if (ImGui.Combo("VoiceName", ref voiceIndex, VList.ToArray(), VList.Count))
+                    if (ImGui.Combo("Voice", ref voiceIndex, VList.ToArray(), VList.Count))
                     {
                         Configuration.PollyVoice = VList[voiceIndex];
                         Configuration.Save();
@@ -262,7 +262,7 @@ namespace TextToTalk.UI
                     enumValue = (XivChatType)(int)Enum.Parse(typeof(AdditionalChatTypes.Enum), channel);
                 }
 
-                var selected = Configuration.EnabledChatTypes.Contains((int)enumValue);
+                bool selected = Configuration.EnabledChatTypes.Contains((int)enumValue);
                 if (!ImGui.Checkbox(channel == "PvPTeam" ? "PvP Team" : SplitWords(channel), ref selected)) continue;
                 var inEnabled = Configuration.EnabledChatTypes.Contains((int)enumValue);
                 if (inEnabled)

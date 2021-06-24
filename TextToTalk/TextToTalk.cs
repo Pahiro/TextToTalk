@@ -27,6 +27,7 @@ namespace TextToTalk
         public static Amazon.Polly.Model.DescribeVoicesResponse Voices;
         public static Amazon.Runtime.BasicAWSCredentials AWSCredentials;
         public static Amazon.Polly.AmazonPollyClient PollyClient;
+        public static NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
 
         private DalamudPluginInterface pluginInterface;
         private PluginConfiguration config;
@@ -193,13 +194,20 @@ namespace TextToTalk
 
             var chatTypes = this.config.GetCurrentEnabledChatTypesPreset();
 
+            //Nothing should be active on mine, what did you break Karashiiro? XD
+            foreach (var v in chatTypes.EnabledChatTypes)
+            {
+                PluginLog.Log(v.ToString());
+            }
+            
+
             var typeAccepted = chatTypes.EnabledChatTypes.Contains((int)type);
             var goodMatch = this.config.Good
                 .Where(t => t.Text != "")
                 .Any(t => t.Match(textValue));
             if (!(chatTypes.EnableAllChatTypes || typeAccepted) || this.config.Good.Count > 0 && !goodMatch) return;
-
-            SayAsync(textValue);
+            //Commenting out chat types for now
+            //SayAsync(textValue);
         }
 
         private async Task SayAsync(string textValue)
@@ -242,7 +250,6 @@ namespace TextToTalk
                             req.VoiceId = V.Id;
                         }
                     }
-                    //req.VoiceId = Amazon.Polly.VoiceId.Matthew;
                     req.OutputFormat = Amazon.Polly.OutputFormat.Mp3;
                     req.TextType = Amazon.Polly.TextType.Text;
                     
@@ -255,9 +262,11 @@ namespace TextToTalk
                     NAudio.Wave.Mp3FileReader reader = new NAudio.Wave.Mp3FileReader(local_stream);
                     NAudio.Wave.WaveStream wave_stream = NAudio.Wave.WaveFormatConversionStream.CreatePcmStream(reader);
                     NAudio.Wave.BlockAlignReductionStream ba_stream = new NAudio.Wave.BlockAlignReductionStream(wave_stream);
-                    NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
-                    //Need to still move wout to a global static as well so that I can stop playback when the next one starts.
+                    
+                    //Moved wout to global static so I can stop the previous audiostream
+                    //Seriously not gonna create a queue system.
                     PluginLog.Log("Playing stream...");
+                    wout.Stop(); 
                     wout.Init(ba_stream);
                     wout.Play();
                     while (wout.PlaybackState == NAudio.Wave.PlaybackState.Playing)
