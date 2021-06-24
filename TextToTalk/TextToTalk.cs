@@ -19,8 +19,15 @@ using TextToTalk.UI;
 
 namespace TextToTalk
 {
+    //These aren't technically supposed to be stored. Just want them as public variables.
+    //They'll be loaded whenever the plugin is loaded or the config is changed.
     public class TextToTalk : IDalamudPlugin
     {
+        //Global Objects
+        public static Amazon.Polly.Model.DescribeVoicesResponse Voices;
+        public static Amazon.Runtime.BasicAWSCredentials AWSCredentials;
+        public static Amazon.Polly.AmazonPollyClient PollyClient;
+
         private DalamudPluginInterface pluginInterface;
         private PluginConfiguration config;
         private WindowManager ui;
@@ -71,6 +78,31 @@ namespace TextToTalk
 
             this.commandManager = new CommandManager(pi, this.serviceCollection);
             this.commandManager.AddCommandModule<MainCommandModule>();
+
+            //AWS - Init
+            InitAWS(config);
+        }
+        public static void InitAWS(PluginConfiguration Configuration) 
+        {
+            PluginLog.Log("AWS: Init Basic Credentials");
+            var AccessKeyID = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+            var SecretAccessKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+            if (AccessKeyID != "" || SecretAccessKey == "")
+            { 
+            AWSCredentials = new Amazon.Runtime.BasicAWSCredentials(AccessKeyID, SecretAccessKey);
+
+            PluginLog.Log("AWS: Init Polly Client");
+            PollyClient = new Amazon.Polly.AmazonPollyClient(AWSCredentials, Amazon.RegionEndpoint.EUWest2);
+
+            PluginLog.Log("AWS: Get list of English US Voices"); 
+            var VReq = new Amazon.Polly.Model.DescribeVoicesRequest();
+            VReq.Engine = Configuration.Engine;
+            VReq.LanguageCode = "en-US";
+            VReq.IncludeAdditionalLanguageCodes = true;
+
+            PluginLog.Log("AWS: Save Objects to Config");
+            Voices = PollyClient.DescribeVoices(VReq);
+            }
         }
 
         private bool keysDown;
@@ -197,17 +229,23 @@ namespace TextToTalk
             {
                 await Task.Run(() =>
                 {
-                    var awsCredentials = new Amazon.Runtime.BasicAWSCredentials(config.AccessKeyID, config.SecretAccessKey);
-                    PluginLog.Log("Credentials Init");
-                    Amazon.Polly.AmazonPollyClient cl = new Amazon.Polly.AmazonPollyClient(awsCredentials, Amazon.RegionEndpoint.EUCentral1);
+                    Amazon.Polly.AmazonPollyClient cl = PollyClient;
                     PluginLog.Log("Polly Client Init");
                     Amazon.Polly.Model.SynthesizeSpeechRequest req = new Amazon.Polly.Model.SynthesizeSpeechRequest();
-                    PluginLog.Log("Polly Model Init");
+                    PluginLog.Log("Polly Engine: " + config.Engine);
+                    req.Engine = config.Engine;
                     req.Text = cleanText;
-                    req.VoiceId = Amazon.Polly.VoiceId.Matthew;
+                    foreach (var V in Voices.Voices)
+                    {
+                        if (V.Name == config.PollyVoice)
+                        {
+                            req.VoiceId = V.Id;
+                        }
+                    }
+                    //req.VoiceId = Amazon.Polly.VoiceId.Matthew;
                     req.OutputFormat = Amazon.Polly.OutputFormat.Mp3;
-                    req.SampleRate = "8000";
                     req.TextType = Amazon.Polly.TextType.Text;
+                    
                     Amazon.Polly.Model.SynthesizeSpeechResponse resp = cl.SynthesizeSpeech(req);
                     MemoryStream local_stream = new MemoryStream();
                     resp.AudioStream.CopyTo(local_stream);
@@ -218,7 +256,7 @@ namespace TextToTalk
                     NAudio.Wave.WaveStream wave_stream = NAudio.Wave.WaveFormatConversionStream.CreatePcmStream(reader);
                     NAudio.Wave.BlockAlignReductionStream ba_stream = new NAudio.Wave.BlockAlignReductionStream(wave_stream);
                     NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
-
+                    //Need to still move wout to a global static as well so that I can stop playback when the next one starts.
                     PluginLog.Log("Playing stream...");
                     wout.Init(ba_stream);
                     wout.Play();

@@ -137,40 +137,69 @@ namespace TextToTalk.UI
                 }
                 if (Configuration.Synthesizer == "AWS Polly")
                 {
+                    //Get access key ID or get from Envar
                     var AccessKeyID = "";
                     if (Configuration.AccessKeyID != null)
                     {
                         AccessKeyID = Configuration.AccessKeyID;
                     }
-                    if (ImGui.InputText("AccessKey ID", ref AccessKeyID, 128, ImGuiInputTextFlags.Password))
+                    else
                     {
+                        AccessKeyID = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
                         Configuration.AccessKeyID = AccessKeyID;
                         Configuration.Save();
                     }
+                    //Save Access key ID to Config & Envar
+                    if (ImGui.InputText("AccessKey ID", ref AccessKeyID, 128, ImGuiInputTextFlags.Password))
+                    {
+                        Environment.SetEnvironmentVariable("AWS_ACCESS_KEY_ID", AccessKeyID);
+                        Configuration.AccessKeyID = AccessKeyID;
+                        Configuration.Save();
+                        TextToTalk.InitAWS(Configuration);
+                    }
 
+                    //Get access key secret or get from Envar
                     var SecretAccessKey = "";
                     if (Configuration.SecretAccessKey != null)
                     {
                         SecretAccessKey = Configuration.SecretAccessKey;
                     }
-                    if (ImGui.InputText("Secret Access Key", ref SecretAccessKey, 128, ImGuiInputTextFlags.Password))
+                    else
                     {
+                        SecretAccessKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
                         Configuration.SecretAccessKey = SecretAccessKey;
                         Configuration.Save();
                     }
-
-                    var VoiceId = "";
-                    if (Configuration.VoiceId != null)
+                    //Save Access key secret to Config & Envar
+                    if (ImGui.InputText("Secret Access Key", ref SecretAccessKey, 128, ImGuiInputTextFlags.Password))
                     {
-                        VoiceId = Configuration.VoiceId;
-                    }
-
-                    if (ImGui.InputText("Voice ID", ref VoiceId, 128))
-                    {
-                        Configuration.VoiceId = VoiceId;
+                        Environment.SetEnvironmentVariable("AWS_SECRET_ACCESS_KEY", SecretAccessKey);
+                        Configuration.SecretAccessKey = SecretAccessKey;                        
                         Configuration.Save();
+                        TextToTalk.InitAWS(Configuration);
                     }
-                    
+
+                    //Grab a list of English Voices from AWS (TextToTalk.cs -> Init)
+                    List<string> VList = new List<string>();
+
+                    if (VList.Count == 0)
+                    {
+                        foreach ( var V in TextToTalk.Voices.Voices )
+                        {
+                            VList.Add(V.Name);
+                        }
+                    }
+
+                    string voiceItem = Configuration.PollyVoice;
+                    int voiceIndex = Array.FindIndex(VList.ToArray(), item => item == voiceItem);
+
+                    if (ImGui.Combo("VoiceName", ref voiceIndex, VList.ToArray(), VList.Count))
+                    {
+                        Configuration.PollyVoice = VList[voiceIndex];
+                        Configuration.Save();
+                        TextToTalk.InitAWS(Configuration);
+                    }
+
                     string[] engine = { "neural", "standard" };
 
                     string engineItem = Configuration.Engine;
@@ -180,6 +209,7 @@ namespace TextToTalk.UI
                     {
                         Configuration.Engine = engine[engineIndex];
                         Configuration.Save();
+                        TextToTalk.InitAWS(Configuration);
                     }
                 }
             }
