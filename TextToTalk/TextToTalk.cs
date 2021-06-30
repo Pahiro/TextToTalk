@@ -2,6 +2,7 @@
 using Dalamud.CrystalTower.DependencyInjection;
 using Dalamud.CrystalTower.UI;
 using Dalamud.Game.Internal;
+using Dalamud.Game.ClientState.Actors;
 using Dalamud.Game.Internal.Gui.Addon;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -16,6 +17,7 @@ using System.Threading.Tasks;
 using TextToTalk.Modules;
 using TextToTalk.Talk;
 using TextToTalk.UI;
+using System.Runtime.InteropServices;
 
 namespace TextToTalk
 {
@@ -26,7 +28,7 @@ namespace TextToTalk
         public static Amazon.Runtime.BasicAWSCredentials AWSCredentials;
         public static Amazon.Polly.AmazonPollyClient PollyClient;
         public static NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
-
+        public static byte Gender;
         private DalamudPluginInterface pluginInterface;
         private PluginConfiguration config;
         private WindowManager ui;
@@ -154,10 +156,20 @@ namespace TextToTalk
                 if (!this.config.DisallowMultipleSay || !IsSameSpeaker(talkAddonText.Speaker))
                 {
                     text = $"{talkAddonText.Speaker} says {text}";
+
                     SetLastSpeaker(talkAddonText.Speaker);
                 }
             }
-
+            var Actors = this.pluginInterface.ClientState.Actors;
+            foreach (var Actor in Actors)
+            {
+                if (Actor.Name == talkAddonText.Speaker)
+                {
+                    var prop = (Dalamud.Game.ClientState.Structs.Actor)Actor.GetType().GetProperty("ActorStruct", 
+                        System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance).GetValue(Actor, null);
+                    Gender = prop.Customize[1];
+                }
+            }
             SayAsync(text);
         }
 
@@ -178,6 +190,7 @@ namespace TextToTalk
                         {
                             SetLastQuestText(textValue);
                         }
+
                         textValue = $"{sender.TextValue} says {textValue}";
                         SetLastSpeaker(sender.TextValue);
                     }
@@ -185,7 +198,7 @@ namespace TextToTalk
             }
 
 #if DEBUG
-            PluginLog.Log("Chat message from type {0}: {1}", type, textValue);
+            //PluginLog.Log("Chat message from type {0}: {1}", type, textValue);
 #endif
 
             if (this.config.Bad.Where(t => t.Text != "").Any(t => t.Match(textValue))) return;
@@ -193,11 +206,10 @@ namespace TextToTalk
             var chatTypes = this.config.GetCurrentEnabledChatTypesPreset();
 
             //Nothing should be active on mine, what did you break Karashiiro? XD
-            foreach (var v in chatTypes.EnabledChatTypes)
-            {
-                PluginLog.Log(v.ToString());
-            }
-            
+            //foreach (var v in chatTypes.EnabledChatTypes)
+            //{
+            //    PluginLog.Log(v.ToString());
+            //}
 
             var typeAccepted = chatTypes.EnabledChatTypes.Contains((int)type);
             var goodMatch = this.config.Good
@@ -243,10 +255,20 @@ namespace TextToTalk
                     req.Text = cleanText;
                     foreach (var V in Voices.Voices)
                     {
-                        if (V.Name == config.PollyVoice)
+                        if (Gender == 0)
                         {
-                            req.VoiceId = V.Id;
+                            if (V.Name == config.PollyVoiceMale)
+                            {
+                                req.VoiceId = V.Id;
+                            }
+                        } else
+                        {
+                            if (V.Name == config.PollyVoiceFemale)
+                            {
+                                req.VoiceId = V.Id;
+                            }
                         }
+                        
                     }
                     req.OutputFormat = Amazon.Polly.OutputFormat.Mp3;
                     req.TextType = Amazon.Polly.TextType.Text;

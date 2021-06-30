@@ -190,12 +190,22 @@ namespace TextToTalk.UI
                         }
                     }
 
-                    string voiceItem = Configuration.PollyVoice;
-                    int voiceIndex = Array.FindIndex(VList.ToArray(), item => item == voiceItem);
+                    string voiceItemM = Configuration.PollyVoiceMale;
+                    int voiceIndexM = Array.FindIndex(VList.ToArray(), item => item == voiceItemM);
 
-                    if (ImGui.Combo("Voice", ref voiceIndex, VList.ToArray(), VList.Count))
+                    if (ImGui.Combo("Male Voice", ref voiceIndexM, VList.ToArray(), VList.Count))
                     {
-                        Configuration.PollyVoice = VList[voiceIndex];
+                        Configuration.PollyVoiceMale = VList[voiceIndexM];
+                        Configuration.Save();
+                        TextToTalk.InitAWS(Configuration);
+                    }
+
+                    string voiceItemF = Configuration.PollyVoiceFemale;
+                    int voiceIndexF = Array.FindIndex(VList.ToArray(), item => item == voiceItemF);
+
+                    if (ImGui.Combo("Female Voice", ref voiceIndexF, VList.ToArray(), VList.Count))
+                    {
+                        Configuration.PollyVoiceFemale = VList[voiceIndexF];
                         Configuration.Save();
                         TextToTalk.InitAWS(Configuration);
                     }

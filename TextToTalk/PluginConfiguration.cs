@@ -49,7 +49,8 @@ namespace TextToTalk
 
         public string AccessKeyID { get; set; }
         public string SecretAccessKey { get; set; }
-        public string PollyVoice { get; set; }
+        public string PollyVoiceMale { get; set; }
+        public string PollyVoiceFemale { get; set; }
         public string Engine { get; set; }
         
         public bool NameNpcWithSay { get; set; } = true;
