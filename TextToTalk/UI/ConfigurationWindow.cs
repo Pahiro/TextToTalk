@@ -6,20 +6,35 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Speech.Synthesis;
 using System.Text;
+using TextToTalk.Backends;
+using TextToTalk.GameEnums;
 
 namespace TextToTalk.UI
 {
     public class ConfigurationWindow : ImmediateModeWindow
     {
         public PluginConfiguration Configuration { get; set; }
-        public WsServer WebSocketServer { get; set; }
-        public SpeechSynthesizer Synthesizer { get; set; }
+        public VoiceBackendManager BackendManager { get; set; }
+
+        private readonly ImExposedFunctions helpers;
+
+        public ConfigurationWindow()
+        {
+            this.helpers = new ImExposedFunctions
+            {
+                OpenVoiceUnlockerWindow = OpenWindow<VoiceUnlockerWindow>,
+            };
+        }
 
         public override void Draw(ref bool visible)
         {
-            ImGui.SetNextWindowSize(new Vector2(520, 420));
+            var titleBarColor = BackendManager.GetBackendTitleBarColor();
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, titleBarColor != default
+                ? titleBarColor
+                : ImGui.ColorConvertU32ToFloat4(ImGui.GetColorU32(ImGuiCol.TitleBgActive)));
+
+            ImGui.SetNextWindowSize(new Vector2(520, 480));
             ImGui.Begin("TextToTalk Configuration", ref visible, ImGuiWindowFlags.NoResize);
             {
                 if (ImGui.BeginTabBar("TextToTalk##tabbar"))
@@ -46,184 +61,65 @@ namespace TextToTalk.UI
                 ImGui.EndTabBar();
             }
             ImGui.End();
+
+            ImGui.PopStyleColor();
         }
 
         private void DrawSynthesizerSettings()
         {
-            if (ImGui.CollapsingHeader("Keybinds")) {
+            if (ImGui.CollapsingHeader("Keybinds##TextToTalkKeybind1"))
+            {
                 var useKeybind = Configuration.UseKeybind;
-                if (ImGui.Checkbox("Enable Keybind", ref useKeybind))
+                if (ImGui.Checkbox("Enable Keybind##TextToTalkKeybind2", ref useKeybind))
                 {
                     Configuration.UseKeybind = useKeybind;
                     Configuration.Save();
                 }
+
                 ImGui.PushItemWidth(100f);
                 var kItem1 = VirtualKey.EnumToIndex(Configuration.ModifierKey);
-                if (ImGui.Combo("##TextToTalkKeybind1", ref kItem1, VirtualKey.Names.Take(3).ToArray(), 3))
+                if (ImGui.Combo("##TextToTalkKeybind3", ref kItem1, VirtualKey.Names.Take(3).ToArray(), 3))
                 {
                     Configuration.ModifierKey = VirtualKey.IndexToEnum(kItem1);
                     Configuration.Save();
                 }
                 ImGui.SameLine();
                 var kItem2 = VirtualKey.EnumToIndex(Configuration.MajorKey) - 3;
-                if (ImGui.Combo("TTS Toggle Keybind##TextToTalkKeybind2", ref kItem2, VirtualKey.Names.Skip(3).ToArray(), VirtualKey.Names.Length - 3))
+                if (ImGui.Combo("TTS Toggle Keybind##TextToTalkKeybind4", ref kItem2, VirtualKey.Names.Skip(3).ToArray(), VirtualKey.Names.Length - 3))
                 {
-                    Configuration.MajorKey = VirtualKey.IndexToEnum(kItem2) + 3;
+                    Configuration.MajorKey = VirtualKey.IndexToEnum(kItem2 + 3);
                     Configuration.Save();
                 }
                 ImGui.PopItemWidth();
             }
-            if (ImGui.CollapsingHeader("Voices"))
+
+            if (ImGui.CollapsingHeader("Voices##TTTVoicePre1", ImGuiTreeNodeFlags.DefaultOpen))
             {
-                string[] items = { "Microsoft Voices", "Websocket Server", "AWS Polly" };
+                var backends = Enum.GetNames(typeof(TTSBackend));
+                var backendsDisplay = backends.Select(SplitWords).ToArray();
+                var backend = Configuration.Backend;
+                var backendIndex = Array.IndexOf(backends, backend.ToString());
 
-                string itemName = Configuration.Synthesizer;
-                int itemIndex = Array.FindIndex(items, item => item == itemName);
-
-                if (ImGui.Combo("Synthesizer", ref itemIndex, items, items.Length))
+                if (ImGui.Combo("Voice backend##TTTVoicePre2", ref backendIndex, backendsDisplay, backends.Length))
                 {
-                    Configuration.Synthesizer = items[itemIndex];
-                    Configuration.Save();
-                }
-                if (Configuration.Synthesizer == "Websocket Server")
-                {
-                    PluginLog.Log(Configuration.WebsocketPort.ToString());
-                    var websocketPort = Configuration.WebsocketPort;
-                    
-                    if (ImGui.InputInt("Websocket Port", ref websocketPort, 0))
+                    if (Enum.TryParse(backends[backendIndex], out TTSBackend newBackend))
                     {
-                        Configuration.WebsocketPort = websocketPort;
+                        Configuration.Backend = newBackend;
                         Configuration.Save();
-                        WebSocketServer.Stop();
-                        WebSocketServer.Start();
-                    }
-                    ImGui.TextColored(new Vector4(1.0f, 1.0f, 1.0f, 0.6f), $"{(WebSocketServer.Active ? "Started" : "Will start")} on ws://localhost:{Configuration.WebsocketPort}");
-                }
-                if (Configuration.Synthesizer == "Microsoft Voices")
-                {
-                    var rate = Configuration.Rate;
-                    if (ImGui.SliderInt("Rate", ref rate, -10, 10))
-                    {
-                        Configuration.Rate = rate;
-                        Configuration.Save();
-                    }
 
-                    var volume = Configuration.Volume;
-                    if (ImGui.SliderInt("Volume", ref volume, 0, 100))
-                    {
-                        Configuration.Volume = volume;
-                        Configuration.Save();
-                    }
-
-                    var voiceName = Configuration.VoiceName;
-                    var voices = Synthesizer.GetInstalledVoices().Where(iv => iv?.Enabled ?? false).ToList();
-                    var voiceIndex = voices.FindIndex(iv => iv?.VoiceInfo?.Name == voiceName);
-                    if (ImGui.Combo("Voice",
-                        ref voiceIndex,
-                        voices
-                            .Select(iv => $"{iv?.VoiceInfo?.Name} ({iv?.VoiceInfo?.Culture?.TwoLetterISOLanguageName.ToUpperInvariant() ?? "Unknown Language"})")
-                            .ToArray(),
-                        voices.Count))
-                    {
-                        Configuration.VoiceName = voices[voiceIndex].VoiceInfo.Name;
-                        Configuration.Save();
-                    }
-
-                    ImGui.Spacing();
-                    if (ImGui.Button("Don't see all of your voices?##VoiceUnlockerSuggestion"))
-                    {
-                        OpenWindow<VoiceUnlockerWindow>();
-                    }
-                }
-                if (Configuration.Synthesizer == "AWS Polly")
-                {
-                    //Get access key ID or get from Envar
-                    var AccessKeyID = "";
-                    if (Configuration.AccessKeyID != null)
-                    {
-                        AccessKeyID = Configuration.AccessKeyID;
+                        BackendManager.SetBackend(newBackend);
                     }
                     else
                     {
-                        AccessKeyID = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-                        Configuration.AccessKeyID = AccessKeyID;
-                        Configuration.Save();
-                    }
-                    //Save Access key ID to Config & Envar
-                    if (ImGui.InputText("AccessKey ID", ref AccessKeyID, 128, ImGuiInputTextFlags.Password))
-                    {
-                        Environment.SetEnvironmentVariable("AWS_ACCESS_KEY_ID", AccessKeyID);
-                        Configuration.AccessKeyID = AccessKeyID;
-                        Configuration.Save();
-                        TextToTalk.InitAWS(Configuration);
-                    }
-
-                    //Get access key secret or get from Envar
-                    var SecretAccessKey = "";
-                    if (Configuration.SecretAccessKey != null)
-                    {
-                        SecretAccessKey = Configuration.SecretAccessKey;
-                    }
-                    else
-                    {
-                        SecretAccessKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-                        Configuration.SecretAccessKey = SecretAccessKey;
-                        Configuration.Save();
-                    }
-                    //Save Access key secret to Config & Envar
-                    if (ImGui.InputText("Secret Access Key", ref SecretAccessKey, 128, ImGuiInputTextFlags.Password))
-                    {
-                        Environment.SetEnvironmentVariable("AWS_SECRET_ACCESS_KEY", SecretAccessKey);
-                        Configuration.SecretAccessKey = SecretAccessKey;                        
-                        Configuration.Save();
-                        TextToTalk.InitAWS(Configuration);
-                    }
-
-                    //Grab a list of English Voices from AWS (TextToTalk.cs -> Init)
-                    List<string> VList = new List<string>();
-
-                    if (VList.Count == 0)
-                    {
-                        foreach ( var V in TextToTalk.Voices.Voices )
-                        {
-                            VList.Add(V.Name);
-                        }
-                    }
-
-                    string voiceItemM = Configuration.PollyVoiceMale;
-                    int voiceIndexM = Array.FindIndex(VList.ToArray(), item => item == voiceItemM);
-
-                    if (ImGui.Combo("Male Voice", ref voiceIndexM, VList.ToArray(), VList.Count))
-                    {
-                        Configuration.PollyVoiceMale = VList[voiceIndexM];
-                        Configuration.Save();
-                        TextToTalk.InitAWS(Configuration);
-                    }
-
-                    string voiceItemF = Configuration.PollyVoiceFemale;
-                    int voiceIndexF = Array.FindIndex(VList.ToArray(), item => item == voiceItemF);
-
-                    if (ImGui.Combo("Female Voice", ref voiceIndexF, VList.ToArray(), VList.Count))
-                    {
-                        Configuration.PollyVoiceFemale = VList[voiceIndexF];
-                        Configuration.Save();
-                        TextToTalk.InitAWS(Configuration);
-                    }
-
-                    string[] engine = { "neural", "standard" };
-
-                    string engineItem = Configuration.Engine;
-                    int engineIndex = Array.FindIndex(engine, item => item == engineItem);
-
-                    if (ImGui.Combo("Engine", ref engineIndex, engine, engine.Length))
-                    {
-                        Configuration.Engine = engine[engineIndex];
-                        Configuration.Save();
-                        TextToTalk.InitAWS(Configuration);
+                        PluginLog.Error($"Failed to parse TTS backend \"{backends[backendIndex]}\".");
                     }
                 }
+
+                // Draw the settings for the specific backend we're using.
+                BackendManager.DrawSettings(this.helpers);
             }
-            if (ImGui.CollapsingHeader("Dialog"))
+
+            if (ImGui.CollapsingHeader("Dialogue"))
             {
                 var readFromQuestTalkAddon = Configuration.ReadFromQuestTalkAddon;
                 if (ImGui.Checkbox("Read NPC dialogue from the dialogue window", ref readFromQuestTalkAddon))
@@ -232,34 +128,84 @@ namespace TextToTalk.UI
                     Configuration.Save();
                 }
 
-                ImGui.Text("");
-                var nameNpcWithSay = Configuration.NameNpcWithSay;
-                if (ImGui.Checkbox("Include \"NPC Name says:\" in NPC dialogue", ref nameNpcWithSay))
+                ImGui.Spacing();
+                var enableNameWithSay = Configuration.EnableNameWithSay;
+                if (ImGui.Checkbox("Enable \"X says:\" when people speak", ref enableNameWithSay))
                 {
-                    Configuration.NameNpcWithSay = nameNpcWithSay;
+                    Configuration.EnableNameWithSay = enableNameWithSay;
                     Configuration.Save();
                 }
 
-                var disallowMultipleSay = Configuration.DisallowMultipleSay;
-                if (ImGui.Checkbox("Only say \"Character Name says:\" the first time a character speaks", ref disallowMultipleSay))
+                if (enableNameWithSay)
                 {
-                    Configuration.DisallowMultipleSay = disallowMultipleSay;
-                    Configuration.Save();
+                    ImGui.Spacing();
+                    ImGui.Indent();
+                    var nameNpcWithSay = Configuration.NameNpcWithSay;
+                    if (ImGui.Checkbox("Also say \"NPC Name says:\" in NPC dialogue", ref nameNpcWithSay))
+                    {
+                        Configuration.NameNpcWithSay = nameNpcWithSay;
+                        Configuration.Save();
+                    }
+
+                    var disallowMultipleSay = Configuration.DisallowMultipleSay;
+                    if (ImGui.Checkbox("Only say \"Character Name says:\" the first time a character speaks", ref disallowMultipleSay))
+                    {
+                        Configuration.DisallowMultipleSay = disallowMultipleSay;
+                        Configuration.Save();
+                    }
                 }
             }
         }
 
         private void DrawChannelSettings()
         {
-            var enableAll = Configuration.EnableAllChatTypes;
+            var currentEnabledChatTypesPreset = Configuration.GetCurrentEnabledChatTypesPreset();
+
+            var presets = Configuration.EnabledChatTypesPresets.ToList();
+            presets.Sort((a, b) => a.Id - b.Id);
+            var presetIndex = presets.IndexOf(currentEnabledChatTypesPreset);
+            if (ImGui.Combo("Preset##TTT1", ref presetIndex, presets.Select(p => p.Name).ToArray(), presets.Count))
+            {
+                Configuration.CurrentPresetId = presets[presetIndex].Id;
+                Configuration.Save();
+            }
+
+            if (ImGui.Button("New preset##TTT2"))
+            {
+                var newPreset = Configuration.NewChatTypesPreset();
+                Configuration.SetCurrentEnabledChatTypesPreset(newPreset.Id);
+                OpenWindow<PresetModificationWindow>();
+            }
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Edit##TTT3"))
+            {
+                OpenWindow<PresetModificationWindow>();
+            }
+
+            if (Configuration.EnabledChatTypesPresets.Count > 1)
+            {
+                ImGui.SameLine();
+                if (ImGui.Button("Delete##TTT4"))
+                {
+                    var otherPreset = Configuration.EnabledChatTypesPresets.First(p => p.Id != currentEnabledChatTypesPreset.Id);
+                    Configuration.SetCurrentEnabledChatTypesPreset(otherPreset.Id);
+                    Configuration.EnabledChatTypesPresets.Remove(currentEnabledChatTypesPreset);
+                }
+            }
+
+            ImGui.Spacing();
+
+            var enableAll = currentEnabledChatTypesPreset.EnableAllChatTypes;
             if (ImGui.Checkbox("Enable all (including undocumented)", ref enableAll))
             {
-                Configuration.EnableAllChatTypes = enableAll;
+                currentEnabledChatTypesPreset.EnableAllChatTypes = enableAll;
             }
             ImGui.TextColored(new Vector4(1.0f, 1.0f, 1.0f, 0.6f), "Recommended for trigger use");
             if (enableAll) return;
 
-            var channels = Enum.GetNames(typeof(XivChatType)).Concat(Enum.GetNames(typeof(AdditionalChatTypes.Enum)));
+            var channels = Enum.GetNames(typeof(XivChatType)).Concat(Enum.GetNames(typeof(AdditionalChatType)));
             foreach (var channel in channels)
             {
                 XivChatType enumValue;
@@ -269,20 +215,20 @@ namespace TextToTalk.UI
                 }
                 catch (ArgumentException)
                 {
-                    enumValue = (XivChatType)(int)Enum.Parse(typeof(AdditionalChatTypes.Enum), channel);
+                    enumValue = (XivChatType)(int)Enum.Parse(typeof(AdditionalChatType), channel);
                 }
 
-                bool selected = Configuration.EnabledChatTypes.Contains((int)enumValue);
+                var selected = currentEnabledChatTypesPreset.EnabledChatTypes.Contains((int)enumValue);
                 if (!ImGui.Checkbox(channel == "PvPTeam" ? "PvP Team" : SplitWords(channel), ref selected)) continue;
-                var inEnabled = Configuration.EnabledChatTypes.Contains((int)enumValue);
+                var inEnabled = currentEnabledChatTypesPreset.EnabledChatTypes.Contains((int)enumValue);
                 if (inEnabled)
                 {
-                    Configuration.EnabledChatTypes.Remove((int)enumValue);
+                    currentEnabledChatTypesPreset.EnabledChatTypes.Remove((int)enumValue);
                     Configuration.Save();
                 }
                 else
                 {
-                    Configuration.EnabledChatTypes.Add((int)enumValue);
+                    currentEnabledChatTypesPreset.EnabledChatTypes.Add((int)enumValue);
                     Configuration.Save();
                 }
             }
@@ -312,10 +258,13 @@ namespace TextToTalk.UI
 
         private void DrawTriggersExclusions()
         {
-            var enableAll = Configuration.EnableAllChatTypes;
+            var currentConfiguration = Configuration.GetCurrentEnabledChatTypesPreset();
+
+            var enableAll = currentConfiguration.EnableAllChatTypes;
             if (ImGui.Checkbox("Enable all chat types (including undocumented)", ref enableAll))
             {
-                Configuration.EnableAllChatTypes = enableAll;
+                currentConfiguration.EnableAllChatTypes = enableAll;
+                Configuration.Save();
             }
             ImGui.TextColored(new Vector4(1.0f, 1.0f, 1.0f, 0.6f), "Recommended for trigger use");
             ImGui.Dummy(new Vector2(0, 5));

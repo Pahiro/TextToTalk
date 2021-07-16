@@ -1,43 +1,40 @@
 ﻿using Dalamud.CrystalTower.Commands;
 using Dalamud.CrystalTower.DependencyInjection;
 using Dalamud.CrystalTower.UI;
+using Dalamud.Game.ClientState.Actors.Types;
 using Dalamud.Game.Internal;
-using Dalamud.Game.ClientState.Actors;
 using Dalamud.Game.Internal.Gui.Addon;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
-using System.IO;
 using System.Linq;
-using System.Speech.Synthesis;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Reflection;
+using TextToTalk.Backends;
+using TextToTalk.GameEnums;
 using TextToTalk.Modules;
 using TextToTalk.Talk;
 using TextToTalk.UI;
-using System.Runtime.InteropServices;
 
 namespace TextToTalk
 {
     public class TextToTalk : IDalamudPlugin
     {
-        //Global Objects
-        public static Amazon.Polly.Model.DescribeVoicesResponse Voices;
-        public static Amazon.Runtime.BasicAWSCredentials AWSCredentials;
-        public static Amazon.Polly.AmazonPollyClient PollyClient;
-        public static NAudio.Wave.WaveOut wout = new NAudio.Wave.WaveOut();
-        public static byte Gender;
+#if DEBUG
+        private const bool InitiallyVisible = true;
+#else
+        private const bool InitiallyVisible = false;
+#endif
+
         private DalamudPluginInterface pluginInterface;
         private PluginConfiguration config;
         private WindowManager ui;
         private CommandManager commandManager;
+        private VoiceBackendManager backendManager;
 
         private Addon talkAddonInterface;
 
-        private SpeechSynthesizer speechSynthesizer;
-        private WsServer wsServer;
         private SharedState sharedState;
 
         private PluginServiceCollection serviceCollection;
@@ -51,15 +48,14 @@ namespace TextToTalk
             this.config = (PluginConfiguration)this.pluginInterface.GetPluginConfig() ?? new PluginConfiguration();
             this.config.Initialize(this.pluginInterface);
 
-            this.wsServer = new WsServer(config.WebsocketPort);
-            this.speechSynthesizer = new SpeechSynthesizer();
             this.sharedState = new SharedState();
+
+            this.backendManager = new VoiceBackendManager(this.config, this.sharedState);
 
             this.serviceCollection = new PluginServiceCollection();
             this.serviceCollection.AddService(this.config);
-            this.serviceCollection.AddService(this.wsServer);
+            this.serviceCollection.AddService(this.backendManager);
             this.serviceCollection.AddService(this.sharedState);
-            this.serviceCollection.AddService(this.speechSynthesizer);
             this.serviceCollection.AddService(this.pluginInterface, shouldDispose: false);
 
             this.ui = new WindowManager(this.serviceCollection);
@@ -67,43 +63,21 @@ namespace TextToTalk
 
             this.ui.AddWindow<UnlockerResultWindow>(initiallyVisible: false);
             this.ui.AddWindow<VoiceUnlockerWindow>(initiallyVisible: false);
-            this.ui.AddWindow<ConfigurationWindow>(initiallyVisible: false);
+            this.ui.AddWindow<PresetModificationWindow>(initiallyVisible: false);
+            this.ui.AddWindow<ConfigurationWindow>(InitiallyVisible);
 
             this.pluginInterface.UiBuilder.OnBuildUi += this.ui.Draw;
             this.pluginInterface.UiBuilder.OnOpenConfigUi += OpenConfigUi;
 
             this.pluginInterface.Framework.Gui.Chat.OnChatMessage += OnChatMessage;
+            this.pluginInterface.Framework.Gui.Chat.OnChatMessage += CheckFailedToBindPort;
 
             this.pluginInterface.Framework.OnUpdateEvent += PollTalkAddon;
             this.pluginInterface.Framework.OnUpdateEvent += CheckKeybindPressed;
+            this.pluginInterface.Framework.OnUpdateEvent += CheckPresetKeybindPressed;
 
             this.commandManager = new CommandManager(pi, this.serviceCollection);
             this.commandManager.AddCommandModule<MainCommandModule>();
-
-            //AWS - Init
-            InitAWS(config);
-        }
-        public static void InitAWS(PluginConfiguration Configuration) 
-        {
-            PluginLog.Log("AWS: Init Basic Credentials");
-            var AccessKeyID = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
-            var SecretAccessKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
-            if (AccessKeyID != "" || SecretAccessKey == "")
-            { 
-            AWSCredentials = new Amazon.Runtime.BasicAWSCredentials(AccessKeyID, SecretAccessKey);
-
-            PluginLog.Log("AWS: Init Polly Client");
-            PollyClient = new Amazon.Polly.AmazonPollyClient(AWSCredentials, Amazon.RegionEndpoint.EUWest2);
-
-            PluginLog.Log("AWS: Get list of English US Voices"); 
-            var VReq = new Amazon.Polly.Model.DescribeVoicesRequest();
-            VReq.Engine = Configuration.Engine;
-            VReq.LanguageCode = "en-US";
-            VReq.IncludeAdditionalLanguageCodes = true;
-
-            PluginLog.Log("AWS: Save Objects to Config");
-            Voices = PollyClient.DescribeVoices(VReq);
-            }
         }
 
         private bool keysDown;
@@ -127,11 +101,20 @@ namespace TextToTalk
             this.keysDown = false;
         }
 
+        private void CheckPresetKeybindPressed(Framework framework)
+        {
+            foreach (var preset in this.config.EnabledChatTypesPresets.Where(p => p.UseKeybind))
+            {
+                if (this.pluginInterface.ClientState.KeyState[(byte)preset.ModifierKey] &&
+                    this.pluginInterface.ClientState.KeyState[(byte)preset.MajorKey])
+                {
+                    this.config.SetCurrentEnabledChatTypesPreset(preset.Id);
+                }
+            }
+        }
+
         private unsafe void PollTalkAddon(Framework framework)
         {
-            if (!this.config.Enabled) return;
-            if (!this.config.ReadFromQuestTalkAddon) return;
-
             if (this.talkAddonInterface == null || this.talkAddonInterface.Address == IntPtr.Zero)
             {
                 this.talkAddonInterface = this.pluginInterface.Framework.Gui.GetAddonByName("Talk", 1);
@@ -147,30 +130,35 @@ namespace TextToTalk
             if (talkAddonText.Text == "" || IsDuplicateQuestText(talkAddonText.Text)) return;
             SetLastQuestText(text);
 
-#if DEBUG
-            PluginLog.Log($"NPC text found: \"{text}\"");
-#endif
-
             if (talkAddonText.Speaker != "" && ShouldSaySender())
             {
                 if (!this.config.DisallowMultipleSay || !IsSameSpeaker(talkAddonText.Speaker))
                 {
                     text = $"{talkAddonText.Speaker} says {text}";
-
                     SetLastSpeaker(talkAddonText.Speaker);
                 }
             }
-            var Actors = this.pluginInterface.ClientState.Actors;
-            foreach (var Actor in Actors)
-            {
-                if (Actor.Name == talkAddonText.Speaker)
-                {
-                    var prop = (Dalamud.Game.ClientState.Structs.Actor)Actor.GetType().GetProperty("ActorStruct", 
-                        System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance).GetValue(Actor, null);
-                    Gender = prop.Customize[1];
-                }
-            }
-            SayAsync(text);
+
+            // This check is performed after setting the last text and speaker so that enabling
+            // TTS doesn't suddenly say text for a recently-closed dialogue box.
+            if (!this.config.Enabled) return;
+            if (!this.config.ReadFromQuestTalkAddon) return;
+
+            var speaker = this.pluginInterface.ClientState.Actors
+                .FirstOrDefault(actor => actor.Name == talkAddonText.Speaker);
+
+            Say(speaker, text);
+        }
+
+        private bool notifiedFailedToBindPort;
+        private void CheckFailedToBindPort(XivChatType type, uint id, ref SeString sender, ref SeString message, ref bool handled)
+        {
+            if (!this.pluginInterface.ClientState.IsLoggedIn || !this.sharedState.WSFailedToBindPort || this.notifiedFailedToBindPort) return;
+            var chat = this.pluginInterface.Framework.Gui.Chat;
+            chat.Print($"TextToTalk failed to bind to port {config.WebsocketPort}. " +
+                       "Please close the owner of that port and reload the Websocket server, " +
+                       "or select a different port.");
+            this.notifiedFailedToBindPort = true;
         }
 
         private void OnChatMessage(XivChatType type, uint id, ref SeString sender, ref SeString message, ref bool handled)
@@ -180,13 +168,17 @@ namespace TextToTalk
             var textValue = message.TextValue;
             if (IsDuplicateQuestText(textValue)) return;
 
+#if DEBUG
+            PluginLog.Log("Chat message from type {0}: {1}", type, textValue);
+#endif
+
             if (sender != null && sender.TextValue != string.Empty)
             {
                 if (ShouldSaySender(type))
                 {
                     if (!this.config.DisallowMultipleSay || !IsSameSpeaker(sender.TextValue))
                     {
-                        if ((int)type == (int)AdditionalChatTypes.Enum.NPCDialogue)
+                        if ((int)type == (int)AdditionalChatType.NPCDialogue)
                         {
                             SetLastQuestText(textValue);
                         }
@@ -197,104 +189,49 @@ namespace TextToTalk
                 }
             }
 
-#if DEBUG
-            //PluginLog.Log("Chat message from type {0}: {1}", type, textValue);
-#endif
-
             if (this.config.Bad.Where(t => t.Text != "").Any(t => t.Match(textValue))) return;
 
             var chatTypes = this.config.GetCurrentEnabledChatTypesPreset();
-
-            //Nothing should be active on mine, what did you break Karashiiro? XD
-            //foreach (var v in chatTypes.EnabledChatTypes)
-            //{
-            //    PluginLog.Log(v.ToString());
-            //}
 
             var typeAccepted = chatTypes.EnabledChatTypes.Contains((int)type);
             var goodMatch = this.config.Good
                 .Where(t => t.Text != "")
                 .Any(t => t.Match(textValue));
             if (!(chatTypes.EnableAllChatTypes || typeAccepted) || this.config.Good.Count > 0 && !goodMatch) return;
-            //Commenting out chat types for now
-            //SayAsync(textValue);
+
+            var senderText = sender?.TextValue; // Can't access in lambda
+            var speaker = this.pluginInterface.ClientState.Actors
+                .FirstOrDefault(a => a.Name == senderText);
+
+            Say(speaker, textValue);
         }
 
-        private async Task SayAsync(string textValue)
+        private void Say(Actor speaker, string textValue)
         {
-            var cleanText = TalkUtils.StripSSMLTokens(textValue);
+            var cleanText = Pipe(
+                textValue,
+                TalkUtils.StripSSMLTokens,
+                TalkUtils.NormalizePunctuation);
+            var gender = this.config.UseGenderedVoicePresets ? GetActorGender(speaker) : Gender.None;
+            this.backendManager.Say(gender, cleanText);
+        }
 
-            if (this.config.Synthesizer == "Websocket Server")
-            {
-                this.wsServer.Broadcast(cleanText);
-#if DEBUG
-                PluginLog.Log("Sent message {0} on WebSocket server.", textValue);
-#endif
-            }
-            else if (this.config.Synthesizer == "Microsoft Voices")
-            {
-                this.speechSynthesizer.Rate = this.config.Rate;
-                this.speechSynthesizer.Volume = this.config.Volume;
+        private static Gender GetActorGender(Actor actor)
+        {
+            if (actor == null) return Gender.None;
 
-                if (this.speechSynthesizer.Voice.Name != this.config.VoiceName)
-                {
-                    this.speechSynthesizer.SelectVoice(this.config.VoiceName);
-                }
-
-                this.speechSynthesizer.SpeakAsync(cleanText);
-            }
-            else if (this.config.Synthesizer == "AWS Polly")
+            var actorStructProp = typeof(Actor)
+                .GetProperty("ActorStruct", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (actorStructProp == null)
             {
-                await Task.Run(() =>
-                {
-                    Amazon.Polly.AmazonPollyClient cl = PollyClient;
-                    PluginLog.Log("Polly Client Init");
-                    Amazon.Polly.Model.SynthesizeSpeechRequest req = new Amazon.Polly.Model.SynthesizeSpeechRequest();
-                    PluginLog.Log("Polly Engine: " + config.Engine);
-                    req.Engine = config.Engine;
-                    req.Text = cleanText;
-                    foreach (var V in Voices.Voices)
-                    {
-                        if (Gender == 0)
-                        {
-                            if (V.Name == config.PollyVoiceMale)
-                            {
-                                req.VoiceId = V.Id;
-                            }
-                        } else
-                        {
-                            if (V.Name == config.PollyVoiceFemale)
-                            {
-                                req.VoiceId = V.Id;
-                            }
-                        }
-                        
-                    }
-                    req.OutputFormat = Amazon.Polly.OutputFormat.Mp3;
-                    req.TextType = Amazon.Polly.TextType.Text;
-                    
-                    Amazon.Polly.Model.SynthesizeSpeechResponse resp = cl.SynthesizeSpeech(req);
-                    MemoryStream local_stream = new MemoryStream();
-                    resp.AudioStream.CopyTo(local_stream);
-                    local_stream.Position = 0;
-                    PluginLog.Log("Got mp3 stream, length: " + local_stream.Length.ToString());
-                
-                    NAudio.Wave.Mp3FileReader reader = new NAudio.Wave.Mp3FileReader(local_stream);
-                    NAudio.Wave.WaveStream wave_stream = NAudio.Wave.WaveFormatConversionStream.CreatePcmStream(reader);
-                    NAudio.Wave.BlockAlignReductionStream ba_stream = new NAudio.Wave.BlockAlignReductionStream(wave_stream);
-                    
-                    //Moved wout to global static so I can stop the previous audiostream
-                    //Seriously not gonna create a queue system.
-                    PluginLog.Log("Playing stream...");
-                    wout.Stop(); 
-                    wout.Init(ba_stream);
-                    wout.Play();
-                    while (wout.PlaybackState == NAudio.Wave.PlaybackState.Playing)
-                    {
-                        Thread.Sleep(100);
-                    }
-                });
+                PluginLog.Warning("Failed to retrieve actor struct accessor.");
+                return Gender.None;
             }
+
+            var actorStruct = (Dalamud.Game.ClientState.Structs.Actor)actorStructProp.GetValue(actor);
+            var actorGender = (Gender)actorStruct.Customize[1];
+
+            return actorGender;
         }
 
         private void OpenConfigUi(object sender, EventArgs args)
@@ -324,12 +261,17 @@ namespace TextToTalk
 
         private bool ShouldSaySender()
         {
-            return this.config.NameNpcWithSay;
+            return this.config.EnableNameWithSay && this.config.NameNpcWithSay;
         }
 
         private bool ShouldSaySender(XivChatType type)
         {
-            return this.config.NameNpcWithSay || (int)type != (int)AdditionalChatTypes.Enum.NPCDialogue;
+            return this.config.EnableNameWithSay && (this.config.NameNpcWithSay || (int)type != (int)AdditionalChatType.NPCDialogue);
+        }
+
+        private static T Pipe<T>(T input, params Func<T, T>[] transforms)
+        {
+            return transforms.Aggregate(input, (agg, next) => next(agg));
         }
 
         #region IDisposable Support
@@ -341,10 +283,10 @@ namespace TextToTalk
 
             this.pluginInterface.Framework.OnUpdateEvent -= PollTalkAddon;
             this.pluginInterface.Framework.OnUpdateEvent -= CheckKeybindPressed;
+            this.pluginInterface.Framework.OnUpdateEvent -= CheckPresetKeybindPressed;
 
+            this.pluginInterface.Framework.Gui.Chat.OnChatMessage -= CheckFailedToBindPort;
             this.pluginInterface.Framework.Gui.Chat.OnChatMessage -= OnChatMessage;
-
-            this.wsServer.Stop();
 
             this.pluginInterface.SavePluginConfig(this.config);
 

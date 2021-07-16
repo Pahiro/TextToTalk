@@ -1,18 +1,50 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Speech.Synthesis;
+﻿using Amazon.Polly;
 using Dalamud.Configuration;
 using Dalamud.Game.Text;
 using Dalamud.Plugin;
 using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Speech.Synthesis;
+using TextToTalk.Backends;
+using TextToTalk.GameEnums;
+using TextToTalk.Migrations;
+
 // ReSharper disable InconsistentNaming
 
 namespace TextToTalk
 {
     public class PluginConfiguration : IPluginConfiguration
     {
-        private const string DefaultEnabledChatTypesPreset = "Default";
+        private const string DefaultPreset = "Default";
+
+        #region Obsolete Members
+        [Obsolete("Use EnabledChatTypesPresets.")]
+        public bool EnableAllChatTypes { get; set; }
+
+        [Obsolete("Use EnabledChatTypesPresets.")]
+        // ReSharper disable once CollectionNeverUpdated.Global
+        public IList<int> EnabledChatTypes { get; set; }
+
+        [Obsolete("Use VoicePresets.")]
+        public int Rate { get; set; }
+
+        [Obsolete("Use VoicePresets.")]
+        public int Volume { get; set; }
+
+        [Obsolete("Use VoicePresets.")]
+        public string VoiceName { get; set; }
+
+        [Obsolete("Use Backend.")]
+        public bool UseWebsocket { get; set; }
+
+        /// <summary>
+        /// <c>true</c> if it is not the first time, <c>false</c> if the first time handler has not run before. This was named horribly.
+        /// </summary>
+        [Obsolete("Use InitializedEver.")]
+        public bool FirstTime { get; set; }
+        #endregion
 
         public int Version { get; set; }
 
@@ -22,47 +54,65 @@ namespace TextToTalk
         public VirtualKey.Enum ModifierKey { get; set; }
         public VirtualKey.Enum MajorKey { get; set; }
 
-        [Obsolete("Use EnabledChatTypesPresets.")]
-        public bool EnableAllChatTypes { get; set; }
-
-        [Obsolete("Use EnabledChatTypesPresets.")]
-        public IList<int> EnabledChatTypes { get; set; }
-
         public bool MigratedTo1_5 { get; set; }
+
+        public bool MigratedTo1_6 { get; set; }
 
         public IList<Trigger> Bad { get; set; }
         public IList<Trigger> Good { get; set; }
 
-        public string CurrentEnabledChatTypesPreset { get; set; }
-        public IDictionary<string, EnabledChatTypesPreset> EnabledChatTypesPresets { get; set; }
+        public int CurrentPresetId { get; set; }
+        public IList<EnabledChatTypesPreset> EnabledChatTypesPresets { get; set; }
 
-        public int Rate { get; set; }
-        public int Volume { get; set; }
+        public int CurrentVoicePresetId { get; set; }
+        public IList<VoicePreset> VoicePresets { get; set; }
 
-        public string VoiceName { get; set; }
-
-        public bool UseWebsocket { get; set; }
+        public TTSBackend Backend { get; set; }
 
         public int WebsocketPort { get; set; }
-        
-        public string Synthesizer { get; set; }
 
-        public string AccessKeyID { get; set; }
-        public string SecretAccessKey { get; set; }
-        public string PollyVoiceMale { get; set; }
-        public string PollyVoiceFemale { get; set; }
-        public string Engine { get; set; }
-        
         public bool NameNpcWithSay { get; set; } = true;
+
+        public bool EnableNameWithSay { get; set; } = true;
 
         public bool DisallowMultipleSay { get; set; }
 
         public bool ReadFromQuestTalkAddon { get; set; } = true;
 
-        /// <summary>
-        /// <c>true</c> if it is not the first time, <c>false</c> if the first time handler has run before. This was named horribly.
-        /// </summary>
-        private bool FirstTime { get; set; }
+        public bool UseGenderedVoicePresets { get; set; }
+
+        public int UngenderedVoicePresetId { get; set; }
+
+        public int MaleVoicePresetId { get; set; }
+
+        public int FemaleVoicePresetId { get; set; }
+
+        public string PollyVoice { get; set; }
+
+        public string PollyVoiceUngendered { get; set; }
+
+        public string PollyVoiceMale { get; set; }
+
+        public string PollyVoiceFemale { get; set; }
+
+        public string PollyEngine { get; set; } = Engine.Neural;
+
+        public string PollyRegion { get; set; }
+
+        public int PollySampleRate { get; set; } = 22050;
+
+        public float PollyVolume { get; set; } = 1.0f;
+
+        public int PollyPlaybackRate { get; set; } = 100;
+
+        [JsonIgnore]
+        public bool InitializedEver
+        {
+#pragma warning disable 618
+            get => FirstTime;
+            set => FirstTime = value;
+#pragma warning restore 618
+        }
 
         [JsonIgnore] private DalamudPluginInterface pluginInterface;
 
@@ -73,58 +123,65 @@ namespace TextToTalk
             Bad = new List<Trigger>();
             Good = new List<Trigger>();
 
-            using var ss = new SpeechSynthesizer();
-            Rate = ss.Rate;
-            Volume = ss.Volume;
-
             ModifierKey = VirtualKey.Enum.VkControl;
             MajorKey = VirtualKey.Enum.VkN;
-
-            CurrentEnabledChatTypesPreset = DefaultEnabledChatTypesPreset;
-            EnabledChatTypesPresets = new Dictionary<string, EnabledChatTypesPreset>();
-
-            VoiceName = ss.GetInstalledVoices().First().VoiceInfo.Name;
         }
 
         public void Initialize(DalamudPluginInterface pi)
         {
             this.pluginInterface = pi;
 
-            if (!FirstTime)
+            EnabledChatTypesPresets ??= new List<EnabledChatTypesPreset>();
+            VoicePresets ??= new List<VoicePreset>();
+
+            if (!InitializedEver)
             {
-                EnabledChatTypesPresets[DefaultEnabledChatTypesPreset] = new EnabledChatTypesPreset
+                EnabledChatTypesPresets.Add(new EnabledChatTypesPreset
                 {
+                    Id = 0,
                     EnabledChatTypes = new List<int>
                     {
                         (int) XivChatType.Say,
                         (int) XivChatType.Shout,
                         (int) XivChatType.Party,
-                        (int) AdditionalChatTypes.Enum.BeneficialEffectOnYou,
-                        (int) AdditionalChatTypes.Enum.BeneficialEffectOnYouEnded,
-                        (int) AdditionalChatTypes.Enum.BeneficialEffectOnOtherPlayer,
+                        (int) AdditionalChatType.BeneficialEffectOnYou,
+                        (int) AdditionalChatType.BeneficialEffectOnYouEnded,
+                        (int) AdditionalChatType.BeneficialEffectOnOtherPlayer,
                     },
-                };
+                    Name = DefaultPreset,
+                    UseKeybind = false,
+                    ModifierKey = VirtualKey.Enum.VkShift,
+                    MajorKey = VirtualKey.Enum.Vk0,
+                });
 
-                FirstTime = true;
-                MigratedTo1_5 = true;
-            }
-
-            if (FirstTime && !MigratedTo1_5)
-            {
-                EnabledChatTypesPresets[DefaultEnabledChatTypesPreset] = new EnabledChatTypesPreset
+                using var ss = new SpeechSynthesizer();
+                VoicePresets.Add(new VoicePreset
                 {
-#pragma warning disable CS1062 // The best overloaded Add method for the collection initializer element is obsolete
-#pragma warning disable 618
-                    EnableAllChatTypes = EnableAllChatTypes,
-                    EnabledChatTypes = EnabledChatTypes,
-#pragma warning restore 618
-#pragma warning restore CS1062 // The best overloaded Add method for the collection initializer element is obsolete
-                };
+                    Id = 0,
+                    Rate = ss.Rate,
+                    Volume = ss.Volume,
+                    VoiceName = ss.GetInstalledVoices().First().VoiceInfo.Name,
+                    Name = DefaultPreset,
+                });
 
+                InitializedEver = true;
                 MigratedTo1_5 = true;
+                MigratedTo1_6 = true;
             }
 
-            this.pluginInterface.SavePluginConfig(this);
+            if (InitializedEver)
+            {
+                var migrations = new IConfigurationMigration[] { new Migration1_5(), new Migration1_6() };
+                foreach (var migration in migrations)
+                {
+                    if (migration.ShouldMigrate(this))
+                    {
+                        migration.Migrate(this);
+                    }
+                }
+            }
+
+            Save();
         }
 
         public void Save()
@@ -134,12 +191,74 @@ namespace TextToTalk
 
         public EnabledChatTypesPreset GetCurrentEnabledChatTypesPreset()
         {
-            return EnabledChatTypesPresets[CurrentEnabledChatTypesPreset];
+            return EnabledChatTypesPresets.First(p => p.Id == CurrentPresetId);
         }
 
-        public void SetCurrentEnabledChatTypesPreset(string presetName)
+        public EnabledChatTypesPreset NewChatTypesPreset()
         {
-            CurrentEnabledChatTypesPreset = presetName;
+            var highestId = EnabledChatTypesPresets.Select(p => p.Id).Max();
+            var preset = new EnabledChatTypesPreset
+            {
+                Id = highestId + 1,
+                EnabledChatTypes = new List<int>(),
+                Name = "New preset",
+                UseKeybind = false,
+                ModifierKey = VirtualKey.Enum.VkShift,
+                MajorKey = VirtualKey.Enum.Vk0,
+            };
+
+            EnabledChatTypesPresets.Add(preset);
+
+            return preset;
+        }
+
+        public void SetCurrentEnabledChatTypesPreset(int presetId)
+        {
+            CurrentPresetId = presetId;
+        }
+
+        public VoicePreset GetCurrentVoicePreset()
+        {
+            return VoicePresets.First(p => p.Id == CurrentVoicePresetId);
+        }
+
+        public VoicePreset GetCurrentUngenderedVoicePreset()
+        {
+            return VoicePresets.FirstOrDefault(p => p.Id == UngenderedVoicePresetId);
+        }
+
+        public VoicePreset GetCurrentMaleVoicePreset()
+        {
+            return VoicePresets.FirstOrDefault(p => p.Id == MaleVoicePresetId);
+        }
+
+        public VoicePreset GetCurrentFemaleVoicePreset()
+        {
+            return VoicePresets.FirstOrDefault(p => p.Id == FemaleVoicePresetId);
+        }
+
+        public VoicePreset NewVoicePreset()
+        {
+            using var ss = new SpeechSynthesizer();
+
+            var highestId = VoicePresets.Select(p => p.Id).Max();
+            var preset = new VoicePreset
+            {
+                Id = highestId + 1,
+                Rate = ss.Rate,
+                Volume = ss.Volume,
+                VoiceName = ss.GetInstalledVoices().First().VoiceInfo.Name,
+                Name = "New preset",
+            };
+
+            VoicePresets.Add(preset);
+
+            return preset;
+        }
+
+        public void SetCurrentVoicePreset(int presetId)
+        {
+            CurrentVoicePresetId = presetId;
         }
     }
 }
