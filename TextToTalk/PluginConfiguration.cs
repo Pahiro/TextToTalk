@@ -130,10 +130,11 @@ namespace TextToTalk
         public void Initialize(DalamudPluginInterface pi)
         {
             this.pluginInterface = pi;
-
-            EnabledChatTypesPresets ??= new List<EnabledChatTypesPreset>();
+            PluginLog.Log("Initialize: Start..");
+            EnabledChatTypesPresets ??= new List<EnabledChatTypesPreset>().ToList();
+            PluginLog.Log("EnabledChatTypesPresets Initialized..");
             VoicePresets ??= new List<VoicePreset>();
-
+            PluginLog.Log("VoicePresets Initialized..");
             if (!InitializedEver)
             {
                 EnabledChatTypesPresets.Add(new EnabledChatTypesPreset
@@ -191,12 +192,15 @@ namespace TextToTalk
 
         public EnabledChatTypesPreset GetCurrentEnabledChatTypesPreset()
         {
+            PluginLog.Log("ChatTypesPreset: GetCurrentEnabledChatTypesPreset..");
             return EnabledChatTypesPresets.First(p => p.Id == CurrentPresetId);
         }
 
         public EnabledChatTypesPreset NewChatTypesPreset()
         {
+            PluginLog.Log("ChatTypesPreset: Start..");
             var highestId = EnabledChatTypesPresets.Select(p => p.Id).Max();
+            PluginLog.Log("ChatTypesPreset: Get HighestID ..");
             var preset = new EnabledChatTypesPreset
             {
                 Id = highestId + 1,
@@ -206,8 +210,9 @@ namespace TextToTalk
                 ModifierKey = VirtualKey.Enum.VkShift,
                 MajorKey = VirtualKey.Enum.Vk0,
             };
-
+            PluginLog.Log("ChatTypesPreset: Structure created..");
             EnabledChatTypesPresets.Add(preset);
+            PluginLog.Log("ChatTypesPreset: Added to list..");
 
             return preset;
         }

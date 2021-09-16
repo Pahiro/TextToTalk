@@ -44,8 +44,10 @@ namespace TextToTalk
         public void Initialize(DalamudPluginInterface pi)
         {
             this.pluginInterface = pi;
-
+            PluginLog.Log("Interface Initialized..");
+            //Problem is here...
             this.config = (PluginConfiguration)this.pluginInterface.GetPluginConfig() ?? new PluginConfiguration();
+            PluginLog.Log("Config Object Loaded..");
             this.config.Initialize(this.pluginInterface);
 
             this.sharedState = new SharedState();
